@@ -1,46 +1,38 @@
-//server.js
+// server.js
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
-const sqlite3 = require("sqlite3").verbose();
-const fs = require("fs");
-const path = require("path");
-const bcrypt = require("bcrypt");
-const multer = require("multer");
-const axios = require("axios");
 
 const app = express();
 const server = http.createServer(app);
 
-
-const { encrypt, decrypt } = require("./utils/encryption");
-
+// Middleware to parse JSON and urlencoded data
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Serve static files from "public" directory
 app.use(express.static("public"));
 
-
-
-// Error handling for invalid routes
+// 404 error handler for invalid routes
 app.use((req, res) => {
   res.status(404).json({ success: false, message: "Route not found." });
-  res.writeHead(200, { 'Content-Type': 'text/html' });
+});
 
-    const url = req.url;
+// WebSocket server setup
+const wss = new WebSocket.Server({ server });
 
-    if (url === '/about') {
-        res.write(' Welcome to about us page');
-        res.end();
-    }
-    else if (url === '/contact') {
-        res.write(' Welcome to contact us page');
-        res.end();
-    }
-    else {
-        res.write('Hello World!');
-        res.end();
-    }
+wss.on("connection", (ws) => {
+  console.log("New WebSocket client connected");
 
+  ws.on("message", (message) => {
+    console.log(`Received message: ${message}`);
+    // Echo the received message back to the client
+    ws.send(`Echo: ${message}`);
+  });
+
+  ws.on("close", () => {
+    console.log("WebSocket client disconnected");
+  });
 });
 
 const PORT = process.env.PORT || 3000;

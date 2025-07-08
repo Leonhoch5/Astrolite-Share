@@ -11,13 +11,13 @@
   "dependencies": {
     "axios": "^1.7.7",
     "bcrypt": "^5.1.1",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.1",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
     "multer": "^1.4.5-lts.1",
     "sqlite3": "^5.1.7",
-    "ws": "^8.18.0"
+    "uuid": "^11.1.0",
+    "ws": "^8.18.3"
   },
- 
   "repository": {
     "url": "https://github.com/Leonhoch5/Astrolite-Share/"
   },

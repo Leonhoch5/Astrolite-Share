@@ -1,41 +1,47 @@
-// server.js
-const express = require("express");
-const http = require("http");
-const WebSocket = require("ws");
+const express = require('express');
+const http = require('http');
+const { WebSocketServer } = require('ws');
+const { v4: uuidv4 } = require('uuid');
+require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
 
-// Middleware to parse JSON and urlencoded data
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+const peers = new Map(); // { peerId => ws }
+app.use(express.static('test'));
 
-// Serve static files from "public" directory
-app.use(express.static("public"));
+wss.on('connection', (ws) => {
+  const peerId = uuidv4();
+  peers.set(peerId, ws);
 
-// 404 error handler for invalid routes
-app.use((req, res) => {
-  res.status(404).json({ success: false, message: "Route not found." });
+  ws.send(JSON.stringify({ type: 'init', peerId }));
+
+  ws.on('message', (msg) => {
+    let data;
+    try {
+      data = JSON.parse(msg);
+    } catch (e) {
+      ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
+      return;
+    }
+
+    if (data.to && peers.has(data.to)) {
+      const target = peers.get(data.to);
+      target.send(JSON.stringify({ ...data, from: peerId }));
+    }
+  });
+
+  ws.on('close', () => {
+    peers.delete(peerId);
+  });
 });
 
-// WebSocket server setup
-const wss = new WebSocket.Server({ server });
-
-wss.on("connection", (ws) => {
-  console.log("New WebSocket client connected");
-
-  ws.on("message", (message) => {
-    console.log(`Received message: ${message}`);
-    // Echo the received message back to the client
-    ws.send(`Echo: ${message}`);
-  });
-
-  ws.on("close", () => {
-    console.log("WebSocket client disconnected");
-  });
+app.get('/', (_, res) => {
+  res.send('Astrolite Share Signaling Server Running...');
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`🚀 Signaling server on http://localhost:${PORT}`);
 });

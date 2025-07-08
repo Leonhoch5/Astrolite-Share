@@ -17,9 +17,7 @@
     "sqlite3": "^5.1.7",
     "ws": "^8.18.0"
   },
-  "engines": {
-    "node": "16.x"
-  },
+ 
   "repository": {
     "url": "https://github.com/Leonhoch5/Astrolite-Share/"
   },

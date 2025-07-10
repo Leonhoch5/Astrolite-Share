@@ -2,22 +2,31 @@ const express = require('express');
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const { v4: uuidv4 } = require('uuid');
+const session = require('express-session');
+const bcrypt = require('bcrypt');
+const { PrismaClient } = require('@prisma/client');
+const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
+const prisma = new PrismaClient();
 
 const peers = new Map(); // { peerId => ws }
-app.use(express.static('test'));
+app.use(express.json());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'astrolite_secret',
+  resave: false,
+  saveUninitialized: true,
+}));
+app.use(cors({
+  origin: "http://localhost:3000",
+  credentials: true,
+}));
 
-wss.on('connection', (ws) => {
-  const peerId = uuidv4();
-  peers.set(peerId, ws);
-
-  ws.send(JSON.stringify({ type: 'init', peerId }));
-
-  ws.on('message', (msg) => {
+wss.on('connection', async (ws, req) => {
+  ws.on('message', async (msg) => {
     let data;
     try {
       data = JSON.parse(msg);
@@ -26,14 +35,37 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    // Register peerId as before
+    if (data.type === "register" && data.peerId) {
+      peers.set(data.peerId, ws);
+      ws.send(JSON.stringify({ type: 'init', peerId: data.peerId }));
+      ws.peerId = data.peerId;
+      return;
+    }
+
+    if (!ws.peerId) return;
+
+    if (data.toUsername) {
+      // Look up peerId by username in DB
+      const user = await prisma.user.findUnique({ where: { username: data.toUsername } });
+      if (user && peers.has(user.peerId)) {
+        const target = peers.get(user.peerId);
+        target.send(JSON.stringify({ ...data, from: ws.peerId }));
+      } else {
+        ws.send(JSON.stringify({ type: "error", message: "User not online" }));
+      }
+      return;
+    }
+
+    // ...existing peerId-based routing...
     if (data.to && peers.has(data.to)) {
       const target = peers.get(data.to);
-      target.send(JSON.stringify({ ...data, from: peerId }));
+      target.send(JSON.stringify({ ...data, from: ws.peerId }));
     }
   });
 
   ws.on('close', () => {
-    peers.delete(peerId);
+    if (ws.peerId) peers.delete(ws.peerId);
   });
 });
 
@@ -41,7 +73,48 @@ app.get('/', (_, res) => {
   res.send('Astrolite Share Signaling Server Running...');
 });
 
-const PORT = process.env.PORT || 3000;
+// Register
+app.post('/register', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
+  const hash = await bcrypt.hash(password, 10);
+  const peerId = uuidv4(); // Generate peerId here
+  try {
+    const user = await prisma.user.create({
+      data: { username, password: hash, peerId }
+    });
+    res.json({ success: true, userId: user.id, peerId: user.peerId });
+  } catch (e) {
+    res.status(400).json({ error: 'Username taken' });
+  }
+});
+
+// Login
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  const user = await prisma.user.findUnique({ where: { username } });
+  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) return res.status(401).json({ error: 'Invalid credentials' });
+  req.session.user = { id: user.id, username: user.username, peerId: user.peerId };
+  res.json({ success: true, username: user.username, peerId: user.peerId });
+});
+
+// Logout
+app.post('/logout', (req, res) => {
+  req.session.destroy(() => res.json({ success: true }));
+});
+
+// Auth check
+app.get('/me', (req, res) => {
+  if (req.session.user) {
+    res.json({ loggedIn: true, user: req.session.user });
+  } else {
+    res.json({ loggedIn: false });
+  }
+});
+
+const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`🚀 Signaling server on http://localhost:${PORT}`);
 });

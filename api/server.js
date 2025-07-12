@@ -45,11 +45,13 @@ wss.on('connection', async (ws, req) => {
 
     if (!ws.peerId) return;
 
+    // Handle requests/messages/chunks by username
     if (data.toUsername) {
       // Look up peerId by username in DB
       const user = await prisma.user.findUnique({ where: { username: data.toUsername } });
       if (user && peers.has(user.peerId)) {
         const target = peers.get(user.peerId);
+        // Forward all types: request, message, file-chunk, file-end
         target.send(JSON.stringify({ ...data, from: ws.peerId }));
       } else {
         ws.send(JSON.stringify({ type: "error", message: "User not online" }));
@@ -57,7 +59,7 @@ wss.on('connection', async (ws, req) => {
       return;
     }
 
-    // ...existing peerId-based routing...
+    // Direct peerId-based routing (for legacy or direct messages)
     if (data.to && peers.has(data.to)) {
       const target = peers.get(data.to);
       target.send(JSON.stringify({ ...data, from: ws.peerId }));

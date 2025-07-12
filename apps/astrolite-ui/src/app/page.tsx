@@ -64,12 +64,95 @@ function OrbitingDots() {
   );
 }
 
+function RequestModal({
+  open,
+  from,
+  content,
+  file,
+  onAccept,
+  onDecline,
+}: {
+  open: boolean;
+  from: string;
+  content?: string;
+  file?: { name: string; type: string };
+  onAccept: () => void;
+  onDecline: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-fadein">
+      <div className="bg-gradient-to-br from-blue-900 via-blue-700 to-cyan-700 rounded-2xl shadow-2xl p-8 w-full max-w-sm border border-cyan-300/30 scale-95 animate-popin">
+        <div className="text-center mb-4">
+          <div className="text-2xl font-bold text-cyan-200 mb-2 animate-pulse">Incoming Request</div>
+          <div className="text-blue-100 mb-1">From: <b>{from}</b></div>
+          {content && <div className="italic text-blue-200 mb-1">"{content}"</div>}
+          {file && (
+            <div className="text-blue-300 mb-2">
+              <span className="font-semibold">File:</span> {file.name} <span className="text-xs text-blue-100">({file.type})</span>
+            </div>
+          )}
+        </div>
+        <div className="flex gap-4 justify-center mt-4">
+          <button
+            className="px-5 py-2 rounded-lg bg-gradient-to-r from-cyan-400 to-blue-500 text-white font-semibold shadow hover:scale-105 transition-all"
+            onClick={onAccept}
+          >
+            Accept
+          </button>
+          <button
+            className="px-5 py-2 rounded-lg bg-gradient-to-r from-red-400 to-pink-500 text-white font-semibold shadow hover:scale-105 transition-all"
+            onClick={onDecline}
+          >
+            Decline
+          </button>
+        </div>
+      </div>
+      <style>{`
+        @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+        .animate-fadein { animation: fadein 0.2s; }
+        @keyframes popin { 0% { transform: scale(0.85); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        .animate-popin { animation: popin 0.25s cubic-bezier(.4,0,.2,1); }
+      `}</style>
+    </div>
+  );
+}
+
+// Utility: split file into chunks
+function chunkFile(file: File, chunkSize = 64 * 1024) {
+  const chunks = [];
+  let offset = 0;
+  while (offset < file.size) {
+    chunks.push(file.slice(offset, offset + chunkSize));
+    offset += chunkSize;
+  }
+  return chunks;
+}
+
 export default function Home() {
   const [peerId, setPeerId] = useState<string | null>(null);
   const [wsStatus, setWsStatus] = useState("Connecting...");
   const [connectTo, setConnectTo] = useState("");
   // Change incoming to hold both sender and message
   const [incoming, setIncoming] = useState<{ from: string, content?: string }[]>([]);
+  const [pendingQueue, setPendingQueue] = useState<
+    { from: string; content?: string; file?: { name: string; type: string; data: string } }[]
+  >([]);
+  const [pendingRequest, setPendingRequest] = useState<{
+    from: string;
+    content?: string;
+    file?: { name: string; type: string; data: string };
+  } | null>(null);
+  const [downloadStatus, setDownloadStatus] = useState<{
+    fileName: string;
+    received: number;
+    total: number;
+    from: string;
+    done: boolean;
+  } | null>(null);
+
+  const [sendFeedback, setSendFeedback] = useState<string>("");
+
   const wsRef = useRef<WebSocket | null>(null);
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
@@ -84,20 +167,17 @@ export default function Home() {
   }, [router]);
 
   useEffect(() => {
-    // Fetch peerId from /me endpoint
     fetch("http://localhost:3001/me", { credentials: "include" })
       .then(res => res.json())
       .then(data => {
         if (data.loggedIn && data.user.peerId) {
           setPeerId(data.user.peerId);
 
-          // Connect to signaling server
           const ws = new WebSocket("ws://localhost:3001");
           wsRef.current = ws;
 
           ws.onopen = () => {
             setWsStatus("Connected");
-            // Register this peerId with the server
             ws.send(JSON.stringify({ type: "register", peerId: data.user.peerId }));
           };
           ws.onclose = () => setWsStatus("Disconnected");
@@ -109,12 +189,46 @@ export default function Home() {
               if (msg.type === "init" && msg.peerId) {
                 setPeerId(msg.peerId);
               }
-              // Handle incoming requests/messages
+              // Show modal for incoming request
               if (msg.type === "request" && msg.from) {
-                setIncoming(prev => [...prev, { from: msg.from, content: msg.content }]);
+                // If a request is already being handled, queue the new one
+                if (pendingRequest) {
+                  setPendingQueue(queue => [...queue, {
+                    from: msg.from,
+                    content: msg.content,
+                    file: msg.file,
+                  }]);
+                } else {
+                  setPendingRequest({
+                    from: msg.from,
+                    content: msg.content,
+                    file: msg.file,
+                  });
+                }
               }
+              // Show incoming chat messages in the list
               if (msg.type === "message" && msg.from) {
                 setIncoming(prev => [...prev, { from: msg.from, content: msg.content }]);
+              }
+              if (msg.type === "file-chunk" && msg.from) {
+                const key = `${msg.from}-${msg.fileName}`;
+                if (!fileChunksRef.current[key]) fileChunksRef.current[key] = [];
+                fileChunksRef.current[key][msg.chunkIndex] = new Uint8Array(msg.data);
+              }
+              if (msg.type === "file-end" && msg.from) {
+                const key = `${msg.from}-${msg.fileName}`;
+                const chunks = fileChunksRef.current[key];
+                if (chunks && chunks.length === msg.totalChunks) {
+                  // Combine chunks
+                  const blob = new Blob(chunks, { type: msg.fileType });
+                  const link = document.createElement("a");
+                  link.href = URL.createObjectURL(blob);
+                  link.download = msg.fileName;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                  delete fileChunksRef.current[key];
+                }
               }
             } catch { }
           };
@@ -132,31 +246,54 @@ export default function Home() {
   }
 
   // Send a connect request to another peer with a message and optional file
+  async function sendFileChunks(toUsername: string, file: File) {
+    const ws = wsRef.current;
+    if (!ws) return;
+
+    const chunks = chunkFile(file);
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = await chunks[i].arrayBuffer();
+      ws.send(JSON.stringify({
+        type: "file-chunk",
+        toUsername,
+        fileName: file.name,
+        fileType: file.type,
+        chunkIndex: i,
+        totalChunks: chunks.length,
+        data: Array.from(new Uint8Array(chunk)), // send as array of numbers
+      }));
+    }
+    // Signal end of file
+    ws.send(JSON.stringify({
+      type: "file-end",
+      toUsername,
+      fileName: file.name,
+      fileType: file.type,
+      totalChunks: chunks.length,
+    }));
+  }
   function handleConnect() {
     if (wsRef.current && connectTo) {
       if (file) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const fileData = reader.result as string;
-          wsRef.current!.send(JSON.stringify({
-            type: "request",
-            toUsername: connectTo,
-            content: message,
-            file: {
-              name: file.name,
-              type: file.type,
-              data: fileData, // base64 string
-            }
-          }));
-        };
-        reader.readAsDataURL(file); // base64 encode
+        sendFileChunks(connectTo, file);
+        wsRef.current.send(JSON.stringify({
+          type: "request",
+          toUsername: connectTo,
+          content: message,
+          fileMeta: {
+            name: file.name,
+            type: file.type,
+            size: file.size,
+          }
+        }));
       } else {
         wsRef.current.send(JSON.stringify({ type: "request", toUsername: connectTo, content: message }));
       }
     }
   }
 
-  // Handle incoming file and trigger download
+  const fileChunksRef = useRef<{ [key: string]: Uint8Array[] }>({});
+
   useEffect(() => {
     if (!wsRef.current) return;
     wsRef.current.onmessage = (event) => {
@@ -165,21 +302,105 @@ export default function Home() {
         if (msg.type === "init" && msg.peerId) {
           setPeerId(msg.peerId);
         }
-        if ((msg.type === "request" || msg.type === "message") && msg.from) {
-          setIncoming(prev => [...prev, { from: msg.from, content: msg.content }]);
-          if (msg.file && msg.file.data && msg.file.name) {
-            // Create a link and trigger download
+        if (msg.type === "request" && msg.from) {
+          // If a request is already being handled, queue the new one
+          if (pendingRequest) {
+            setPendingQueue(queue => [...queue, {
+              from: msg.from,
+              content: msg.content,
+              file: msg.file,
+            }]);
+          } else {
+            setPendingRequest({
+              from: msg.from,
+              content: msg.content,
+              file: msg.file,
+            });
+          }
+        }
+        if (msg.type === "file-chunk" && msg.from) {
+          const key = `${msg.from}-${msg.fileName}`;
+          if (!fileChunksRef.current[key]) fileChunksRef.current[key] = [];
+          fileChunksRef.current[key][msg.chunkIndex] = new Uint8Array(msg.data);
+
+          setDownloadStatus({
+            fileName: msg.fileName,
+            received: fileChunksRef.current[key].filter(Boolean).length,
+            total: msg.totalChunks,
+            from: msg.from,
+            done: false,
+          });
+        }
+        if (msg.type === "file-end" && msg.from) {
+          const key = `${msg.from}-${msg.fileName}`;
+          const chunks = fileChunksRef.current[key];
+          if (chunks && chunks.length === msg.totalChunks) {
+            // Combine chunks
+            const blob = new Blob(chunks, { type: msg.fileType });
             const link = document.createElement("a");
-            link.href = msg.file.data;
-            link.download = msg.file.name;
+            link.href = URL.createObjectURL(blob);
+            link.download = msg.fileName;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+            delete fileChunksRef.current[key];
+            setDownloadStatus({
+              fileName: msg.fileName,
+              received: msg.totalChunks,
+              total: msg.totalChunks,
+              from: msg.from,
+              done: true,
+            });
+            setTimeout(() => setDownloadStatus(null), 4000);
+          }
+        }
+
+        if (msg.type === "message" && msg.from) {
+          setIncoming(prev => [...prev, { from: msg.from, content: msg.content }]);
+          // Feedback for sender
+          if (msg.content === "Request accepted!" || msg.content === "Request declined.") {
+            setSendFeedback(`Peer ${msg.from}: ${msg.content}`);
+            setTimeout(() => setSendFeedback(""), 4000);
           }
         }
       } catch { }
     };
-  }, [wsRef.current]);
+  }, [wsRef.current, pendingRequest]);
+
+
+
+  // When pendingRequest is cleared, show next in queue if available
+  useEffect(() => {
+    if (!pendingRequest && pendingQueue.length > 0) {
+      setPendingRequest(pendingQueue[0]);
+      setPendingQueue(queue => queue.slice(1));
+    }
+  }, [pendingRequest, pendingQueue]);
+
+  // Accept incoming request
+  function handleAcceptRequest() {
+    if (pendingRequest && wsRef.current) {
+      wsRef.current.send(JSON.stringify({
+        type: "message",
+        toUsername: pendingRequest.from,
+        content: "Request accepted!",
+      }));
+      setIncoming(prev => [...prev, { from: pendingRequest.from, content: pendingRequest.content }]);
+      setPendingRequest(null); // This will trigger the next popup if queued
+    }
+  }
+
+  // Decline incoming request
+  function handleDeclineRequest() {
+    if (pendingRequest && wsRef.current) {
+      wsRef.current.send(JSON.stringify({
+        type: "message",
+        toUsername: pendingRequest.from,
+        content: "Request declined.",
+      }));
+      setPendingRequest(null); // This will trigger the next popup if queued
+    }
+  }
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-[#0f2027] via-[#2c5364] to-[#203a43] text-white relative overflow-hidden">
@@ -257,6 +478,45 @@ export default function Home() {
           </div>
         </div>
       </div>
+      {/* Download progress info (bottom right corner) */}
+      {downloadStatus && (
+        <div className="fixed bottom-4 right-4 z-50 bg-blue-900/90 text-cyan-100 px-4 py-3 rounded-xl shadow-lg border border-cyan-400/30 animate-popin">
+          <div className="font-semibold mb-1">Receiving file from <span className="text-cyan-300">{downloadStatus.from}</span></div>
+          <div>
+            <span className="font-bold">{downloadStatus.fileName}</span>
+            <span className="ml-2 text-xs text-blue-200">
+              {downloadStatus.received}/{downloadStatus.total} chunks
+            </span>
+          </div>
+          <div className="w-full bg-cyan-800/40 rounded h-2 mt-2 mb-1">
+            <div
+              className="bg-cyan-400 h-2 rounded transition-all"
+              style={{
+                width: `${(downloadStatus.received / downloadStatus.total) * 100}%`
+              }}
+            />
+          </div>
+          {downloadStatus.done && <div className="text-green-300 mt-1">Download complete!</div>}
+        </div>
+      )}
+
+      {/* Sender feedback (top right corner) */}
+      {sendFeedback && (
+        <div className="fixed top-4 right-4 z-50 bg-cyan-900/90 text-white px-4 py-2 rounded-xl shadow-lg border border-cyan-400/30 animate-popin">
+          {sendFeedback}
+        </div>
+      )}
+
+      {/* Request Modal */}
+      <RequestModal
+        open={!!pendingRequest}
+        from={pendingRequest?.from || ""}
+        content={pendingRequest?.content}
+        file={pendingRequest?.file}
+        onAccept={handleAcceptRequest}
+        onDecline={handleDeclineRequest}
+      />
+
       {/* Responsive/fancy styles */}
       <style>{`
         @media (max-width: 640px) {

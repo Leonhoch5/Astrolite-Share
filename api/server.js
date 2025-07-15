@@ -21,7 +21,7 @@ app.use(session({
   saveUninitialized: true,
 }));
 app.use(cors({
-  origins: ["http://localhost:3000", "https://astrolite-share.vercel.app"],
+  origin: "https://astrolite-share.vercel.app",
   credentials: true,
 }));
 

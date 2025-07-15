@@ -167,7 +167,7 @@ export default function Home() {
   }, [router]);
 
   useEffect(() => {
-    fetch("http://localhost:3001/me", { credentials: "include" })
+    fetch("https://astrolite-share-api.onrender.com/me", { credentials: "include" })
       .then(res => res.json())
       .then(data => {
         if (data.loggedIn && data.user.peerId) {

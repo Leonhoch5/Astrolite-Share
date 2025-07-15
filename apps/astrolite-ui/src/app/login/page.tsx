@@ -11,7 +11,7 @@ export default function LoginPage() {
     async function handleLogin(e: React.FormEvent) {
         e.preventDefault();
         setError("");
-        const res = await fetch("http://localhost:3001/login", {
+        const res = await fetch("https://astrolite-share-api.onrender.com/login", {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },

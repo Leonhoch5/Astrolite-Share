@@ -11,7 +11,7 @@ export default function RegisterPage() {
     async function handleRegister(e: React.FormEvent) {
         e.preventDefault();
         setError("");
-        const res = await fetch("http://localhost:3001/register", {
+        const res = await fetch("https://astrolite-share-api.onrender.com/register", {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },

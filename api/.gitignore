@@ -34,7 +34,6 @@ logs/
 *.tgz
 *.zip
 *.tar
-package-lock.json
 package.json
 uploads/
 

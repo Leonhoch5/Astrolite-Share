@@ -13,7 +13,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const prisma = new PrismaClient();
 
-const peers = new Map(); // { peerId => ws }
+const peers = new Map(); //
 app.use(express.json());
 app.use(session({
   secret: process.env.SESSION_SECRET || 'astrolite_secret',
@@ -21,7 +21,7 @@ app.use(session({
   saveUninitialized: true,
 }));
 app.use(cors({
-  origin: "http://localhost:3000",
+  origins: ["http://localhost:3000", "https://astrolite-share.vercel.app"],
   credentials: true,
 }));
 
@@ -116,7 +116,7 @@ app.get('/me', (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Signaling server on http://localhost:${PORT}`);
 });
